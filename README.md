@@ -15,8 +15,6 @@ To add a new remote model, see [Adding a New Remote](#adding-a-new-remote).
 | Board | Display |
 |-------|---------|
 | Waveshare ESP32-S3-Zero | No |
-| LilyGo T-Dongle S3 | Yes |
-| Adafruit QT Py ESP32-S3 | No |
 
 ## Quick Start
 

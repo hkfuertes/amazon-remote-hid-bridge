@@ -11,7 +11,7 @@ set(EXTRA_COMPONENT_DIRS
 
 set(
   COMPONENTS
-  "main esptool_py driver logger math task hid-rp hid_service esp-nimble-cpp ble_gatt_server espcoredump gui qtpy task t-dongle-s3 esp32s3_zero xbox switch_pro"
+  "main esptool_py driver logger math task hid-rp hid_service esp-nimble-cpp ble_gatt_server espcoredump esp32s3_zero"
   CACHE STRING
   "List of components to include"
   )
