@@ -1,7 +1,7 @@
 menu "Hardware Configuration"
     choice TARGET_HARDWARE
         prompt "Target Hardware"
-        default TARGET_HARDWARE_T3_DONGLE
+        default TARGET_HARDWARE_ESP32S3_ZERO
         help
             Select the target hardware for the example.
 
@@ -12,6 +12,44 @@ menu "Hardware Configuration"
         config TARGET_HARDWARE_QTPY_ESP32_S3
             depends on IDF_TARGET_ESP32S3
             bool "Adafruit QT Py ESP32-S3"
+
+        config TARGET_HARDWARE_ESP32S3_ZERO
+            depends on IDF_TARGET_ESP32S3
+            bool "Waveshare ESP32-S3-Zero"
+
+    endchoice
+endmenu
+
+menu "Debug Configuration"
+    config DEBUG_MODE
+        bool "Debug mode (disable USB HID, enable serial console)"
+        default n
+        help
+            When enabled, USB HID is disabled and the USB port is used
+            for serial console output. Use this to debug BLE connection
+            and HID reports via serial monitor.
+endmenu
+
+menu "BLE Remote Configuration"
+    config BLE_TARGET_MAC
+        string "Target remote BLE MAC address"
+        default ""
+        help
+            If set, only connect to the remote with this MAC address
+            (e.g. "20:BE:B8:80:0C:89"). Leave empty to connect to any
+            HID device found during scan.
+
+    choice REMOTE_MODEL
+        prompt "Remote model"
+        default REMOTE_R_NZ_201_180360
+        help
+            Select the Amazon Fire TV Remote model. Each model has its
+            own HID descriptor dumped from the device. To add a new model,
+            dump the descriptor in debug mode and add a new header in
+            main/remotes/.
+
+        config REMOTE_R_NZ_201_180360
+            bool "R-NZ 201-180360"
 
     endchoice
 endmenu

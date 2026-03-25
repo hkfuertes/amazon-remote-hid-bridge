@@ -3,21 +3,11 @@
 
 #include "logger.hpp"
 #include "task.hpp"
-
-#include "switch_pro.hpp"
-#include "xbox.hpp"
+#include "high_resolution_timer.hpp"
 
 #include "ble.hpp"
 #include "bsp.hpp"
 #include "usb.hpp"
-
-// set to 1 to enable twirling the joysticks automatically (for testing) when
-// there is no BLE device connected.
-#define DEBUG_NO_BLE_TWIRL_JOYSTICKS 0
-// set to 1 to enable pushing the buttons automatically (for testing) when there
-// is no BLE device connected. Not recommended unless you want to annoy
-// yourself.
-#define DEBUG_NO_BLE_TEST_BUTTONS 0
 
 using namespace std::chrono_literals;
 
@@ -26,53 +16,38 @@ using namespace std::chrono_literals;
 #if HAS_DISPLAY
 static std::shared_ptr<Gui> gui;
 #endif
-static std::vector<uint8_t> hid_report_descriptor;
-static std::shared_ptr<GamepadDevice> ble_gamepad;
-static std::shared_ptr<GamepadDevice> usb_gamepad;
 static int battery_level_percent = 100;
 static std::string serial_number = "";
 
 /********* BLE callbacks ***************/
 
-/** Notification / Indication receiving handler callback */
+/** Notification / Indication receiving handler callback - BLE to USB HID pass-through */
 void notifyCB(NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length,
               bool isNotify) {
-  // if it's the battery level characteristic, then store the battery level and
-  // return.
+  // Battery level characteristic
   if (pRemoteCharacteristic->getUUID().equals(
           NimBLEUUID(espp::BatteryService::BATTERY_LEVEL_CHAR_UUID))) {
     battery_level_percent = pData[0];
     return;
   }
-  // otherwise this is a gamepad input report
 
-  // set the data in the ble gamepad
-  ble_gamepad->set_report_data(ble_gamepad->get_input_report_id(), pData, length);
+  // Get the report ID from the Report Reference descriptor mapping
+  int report_id = get_report_id_for_characteristic(pRemoteCharacteristic);
+  if (report_id < 0 || length == 0) return;
 
-  // convert it to GamepadInputs
-  auto inputs = ble_gamepad->get_gamepad_inputs();
+  // Forward to USB HID (both press and release events)
+  if (!tud_hid_ready()) return;
+  tud_hid_report(report_id, pData, length);
 
-  // invert the y-axis for the joysticks
-  inputs.left_joystick.y = -inputs.left_joystick.y;
-  inputs.right_joystick.y = -inputs.right_joystick.y;
-
-  // now set the data in the usb gamepad
-  usb_gamepad->set_gamepad_inputs(inputs);
-  usb_gamepad->set_battery_level(battery_level_percent);
-
-  // then get the output report from the usb gamepad
-  uint8_t usb_report_id = usb_gamepad->get_input_report_id();
-  auto report = usb_gamepad->get_report_data(usb_report_id);
-
-  // send the report via tiny usb
-  if (tud_mounted()) {
-    // and send it over USB
-    send_hid_report(usb_report_id, report);
-
-    // toggle the LED each send, so mod 2
+  // Toggle LED on press events (skip release/all-zeros)
+  bool is_release = true;
+  for (size_t i = 0; i < length; i++) {
+    if (pData[i] != 0) { is_release = false; break; }
+  }
+  if (!is_release) {
     static auto &bsp = Bsp::get();
     static bool led_on = false;
-    static auto on_color = espp::Rgb(0.0f, 0.0f, 1.0f); // use blue for BLE
+    static auto on_color = espp::Rgb(0.0f, 0.0f, 1.0f);
     static auto off_color = espp::Rgb(0.0f, 0.0f, 0.0f);
     bsp.led(led_on ? on_color : off_color);
     led_on = !led_on;
@@ -133,20 +108,13 @@ extern "C" void app_main(void) {
   };
   bsp.initialize_button(on_button_pressed);
 
-  // MARK: Gamepad initialization
-  usb_gamepad = std::make_shared<SwitchPro>();
-  ble_gamepad = std::make_shared<Xbox>();
-
   // MARK: USB initialization
   logger.info("USB initialization");
-#if DEBUG_USB
-  set_gui(gui);
-#endif // DEBUG_USB
-  start_usb_gamepad(usb_gamepad);
+  start_usb_hid();
 
   // MARK: BLE initialization
   logger.info("BLE initialization");
-  std::string device_name = "Switch";
+  std::string device_name = "AmazonRemote";
   init_ble(device_name);
 
   logger.info("Scanning for peripherals");
@@ -182,40 +150,5 @@ extern "C" void app_main(void) {
     gui->set_label_text(serial_number);
 #endif // HAS_DISPLAY
 
-#if DEBUG_NO_BLE_TWIRL_JOYSTICKS
-    // otherwise, just twirl the joysticks
-    static constexpr int num_segments = 16;
-    static int index = 0;
-    float angle = 2.0f * M_PI * (index % num_segments) / (num_segments);
-
-    GamepadInputs inputs{};
-    // joystick inputs are in the range [-1, 1] float
-    inputs.left_joystick.x = sin(angle);
-    inputs.left_joystick.y = cos(angle);
-    inputs.right_joystick.x = cos(angle);
-    inputs.right_joystick.y = sin(angle);
-
-#if DEBUG_NO_BLE_TEST_BUTTONS
-    // NOTE: this is not recommended since it's annoying when it works, but left
-    // in for debugging when it doesn't work.
-    static constexpr int num_buttons = 15;
-    inputs.set_button(index % num_buttons, true);
-#endif // DEBUG_NO_BLE_TEST_BUTTONS
-
-    index++;
-
-    // set the inputs in the usb gamepad
-    usb_gamepad->set_gamepad_inputs(inputs);
-
-    // get the output report from the usb gamepad
-    uint8_t usb_report_id = usb_gamepad->get_input_report_id();
-    auto report = usb_gamepad->get_report_data(usb_report_id);
-
-    if (tud_mounted()) {
-      send_hid_report(usb_report_id, report);
-    } else {
-      bsp.led(espp::Rgb(1.0f, 0.0f, 0.0f));
-    }
-#endif // DEBUG_NO_BLE_TWIRL_JOYSTICKS
   }
 }

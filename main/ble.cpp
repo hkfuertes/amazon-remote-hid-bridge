@@ -1,7 +1,19 @@
 #include "ble.hpp"
 #include "bsp.hpp"
 
+#include <map>
 #include "gaussian.hpp"
+
+// Map from characteristic handle to report ID (from Report Reference descriptor)
+static std::map<uint16_t, int> char_handle_to_report_id;
+
+int get_report_id_for_characteristic(NimBLERemoteCharacteristic *pChr) {
+  auto it = char_handle_to_report_id.find(pChr->getHandle());
+  if (it != char_handle_to_report_id.end()) {
+    return it->second;
+  }
+  return -1;
+}
 
 /************* BLE Configuration ****************/
 
@@ -11,6 +23,7 @@ static bool subscribed = false;
 
 static NimBLEUUID hid_service_uuid(espp::HidService::SERVICE_UUID);
 static NimBLEUUID hid_input_uuid(espp::HidService::REPORT_UUID);
+static NimBLEUUID hid_report_map_uuid("2A4B"); // Report Map characteristic
 
 static NimBLEUUID battery_service_uuid(espp::BatteryService::BATTERY_SERVICE_UUID);
 static NimBLEUUID battery_level_uuid(espp::BatteryService::BATTERY_LEVEL_CHAR_UUID);
@@ -54,6 +67,7 @@ class ClientCallbacks : public NimBLEClientCallbacks {
   espp::Logger logger =
       espp::Logger({.tag = "BLE Client Callbacks", .level = espp::Logger::Verbosity::INFO});
   void onConnect(NimBLEClient *pClient) override {
+    printf("[BLE] Connected to: %s\n", pClient->getPeerAddress().toString().c_str());
     logger.info("connected to: {}", pClient->getPeerAddress().toString());
     static constexpr bool async = true;
     // set the connection parameters now that we've connected
@@ -69,6 +83,8 @@ class ClientCallbacks : public NimBLEClientCallbacks {
   }
 
   void onDisconnect(NimBLEClient *pClient, int reason) override {
+    printf("[BLE] Disconnected from %s, reason=%d\n",
+           pClient->getPeerAddress().toString().c_str(), reason);
     logger.info("{} Disconnected, reason = {} - Starting scan",
                 pClient->getPeerAddress().toString(), reason);
     // if we are not scanning, then start scanning
@@ -80,10 +96,7 @@ class ClientCallbacks : public NimBLEClientCallbacks {
 
   void onAuthenticationComplete(NimBLEConnInfo &connInfo) override {
     if (!connInfo.isEncrypted()) {
-      logger.error("Encrypt connection failed - disconnecting");
-      /** Find the client with the connection handle provided in connInfo */
-      NimBLEDevice::getClientByHandle(connInfo.getConnHandle())->disconnect();
-      return;
+      logger.warn("Connection not encrypted - continuing anyway for legacy remotes");
     } else {
       logger.info("Encryption successful!");
       // set the connection parameters
@@ -99,11 +112,24 @@ class ScanCallbacks : public NimBLEScanCallbacks {
   espp::Logger logger =
       espp::Logger({.tag = "BLE Scan Callbacks", .level = espp::Logger::Verbosity::INFO});
   void onResult(const NimBLEAdvertisedDevice *advertisedDevice) override {
-    logger.info("Advertised Device found: {}", advertisedDevice->toString());
+    printf("[SCAN] Device: %s Name='%s' RSSI=%d\n",
+           advertisedDevice->getAddress().toString().c_str(),
+           advertisedDevice->getName().c_str(),
+           advertisedDevice->getRSSI());
+
+    // If a target MAC is configured, only connect to that specific device
+    static const std::string target_mac(CONFIG_BLE_TARGET_MAC);
+    if (!target_mac.empty()) {
+      if (advertisedDevice->getAddress().toString() != target_mac) {
+        return;
+      }
+      printf("[SCAN] Target MAC matched: %s\n", target_mac.c_str());
+    }
+
     bool should_connect = false;
     bool is_pairable_device =
         advertisedDevice->isAdvertisingService(hid_service_uuid) ||
-        advertisedDevice->getAppearance() == (uint16_t)espp::BleAppearance::GAMEPAD;
+        advertisedDevice->getAppearance() == 0x0180; // Generic HID Device (Amazon Remote)
     if (is_pairing && is_pairable_device) {
       // if we're pairing, then simply connect to the first device that advertises
       // the HID service. The connection callback will try to bond to it.
@@ -197,19 +223,71 @@ static bool timer_callback() {
     if (pSvc) {
       // refresh chars
       pSvc->getCharacteristics(refresh);
-      auto pChr = pSvc->getCharacteristic(hid_input_uuid);
-      if (!pChr) {
-        continue;
+
+      // Log and subscribe to ALL Report characteristics (0x2A4D)
+      auto allChrs = pSvc->getCharacteristics(false);
+      printf("[BLE] HID Service has %d characteristics:\n", (int)allChrs.size());
+      int sub_count = 0;
+      for (auto &c : allChrs) {
+        // Read Report Reference descriptor (0x2908) if present
+        auto pRef = c->getDescriptor(NimBLEUUID("2908"));
+        int ref_report_id = -1;
+        int ref_report_type = -1;
+        if (pRef) {
+          auto refVal = pRef->readValue();
+          if (refVal.size() >= 2) {
+            ref_report_id = (uint8_t)refVal[0];
+            ref_report_type = (uint8_t)refVal[1];
+          }
+        }
+        printf("[BLE]   Char UUID=%s canNotify=%d canRead=%d canWrite=%d refId=%d refType=%d\n",
+               c->getUUID().toString().c_str(),
+               c->canNotify(), c->canRead(), c->canWrite(),
+               ref_report_id, ref_report_type);
+
+        // Subscribe to all notifiable Report characteristics
+        if (c->getUUID().equals(hid_input_uuid) && (c->canNotify() || c->canIndicate())) {
+          printf("[BLE] Subscribing to Report char (refId=%d)...\n", ref_report_id);
+          if (c->subscribe(c->canNotify(), notify_callback)) {
+            printf("[BLE] Subscribe OK! (refId=%d, handle=%d)\n", ref_report_id, c->getHandle());
+            char_handle_to_report_id[c->getHandle()] = ref_report_id;
+            sub_count++;
+          } else {
+            printf("[BLE] Subscribe FAILED (refId=%d)\n", ref_report_id);
+          }
+        }
       }
-      // subscribe to the characteristic
-      if (!pChr->subscribe(pChr->canNotify(), notify_callback)) {
-        pClient->disconnect();
-      } else {
+
+      if (sub_count > 0) {
         subscribed = true;
+        printf("[BLE] Subscribed to %d report characteristics\n", sub_count);
+      } else {
+        printf("[BLE] No report characteristics subscribed, disconnecting\n");
+        pClient->disconnect();
       }
+
       if (subscribed) {
-        // we were able to get the HID service and subscribe, so also subscribe
-        // to the battery service if it exists.
+        // Dump the HID Report Map descriptor to serial
+        auto pReportMap = pSvc->getCharacteristic(hid_report_map_uuid);
+        if (pReportMap && pReportMap->canRead()) {
+          auto mapData = pReportMap->readValue();
+          printf("\n\n========== HID REPORT MAP DUMP ==========\n");
+          printf("// %d bytes - paste into amazon_remote_desc.h\n", (int)mapData.size());
+          printf("static const uint8_t amazon_remote_hid_desc[] = {\n");
+          for (size_t i = 0; i < mapData.size(); i++) {
+            if (i % 16 == 0) printf("    ");
+            printf("0x%02X,", (uint8_t)mapData[i]);
+            if (i % 16 == 15 || i == mapData.size() - 1) printf("\n");
+            else printf(" ");
+          }
+          printf("};\n");
+          printf("static const uint16_t amazon_remote_hid_desc_len = sizeof(amazon_remote_hid_desc);\n");
+          printf("========== END DUMP ==========\n\n");
+        } else {
+          printf("WARNING: Could not read HID Report Map characteristic\n");
+        }
+
+        // also subscribe to the battery service if it exists.
         auto pBatterySvc = pClient->getService(battery_service_uuid);
         if (pBatterySvc) {
           pBatterySvc->getCharacteristics(refresh);
@@ -245,7 +323,7 @@ void init_ble(const std::string &device_name) {
   // // set security parameters
   bool bonding = true;
   bool mitm = false;
-  bool secure_connections = true;
+  bool secure_connections = false; // false to support older BLE 4.0 remotes
   NimBLEDevice::setSecurityAuth(bonding, mitm, secure_connections);
 }
 

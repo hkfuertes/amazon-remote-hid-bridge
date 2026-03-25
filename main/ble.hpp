@@ -18,3 +18,7 @@ void start_ble_reconnection_thread(notify_callback_t callback);
 void start_ble_pairing_thread(notify_callback_t callback);
 bool is_ble_subscribed();
 std::string get_connected_client_serial_number();
+
+// Returns the HID report ID for a given characteristic (from Report Reference descriptor)
+// Returns -1 if not found.
+int get_report_id_for_characteristic(NimBLERemoteCharacteristic *pChr);

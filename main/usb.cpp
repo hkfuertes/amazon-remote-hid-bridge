@@ -1,8 +1,8 @@
 #include "usb.hpp"
 #include "bsp.hpp"
+#include "amazon_remote_desc.h"
 
 static espp::Logger logger({.tag = "USB"});
-static std::shared_ptr<GamepadDevice> usb_gamepad;
 
 // DEUBGGING:
 #if DEBUG_USB
@@ -18,7 +18,9 @@ static std::shared_ptr<Gui> gui;
 #define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + CFG_TUD_HID * TUD_HID_INOUT_DESC_LEN)
 static_assert(CFG_TUD_HID >= 1, "CFG_TUD_HID must be at least 1");
 
-static std::vector<uint8_t> hid_report_descriptor;
+// Use the Amazon Remote HID descriptor directly
+static const uint8_t* hid_report_descriptor     = amazon_remote_hid_desc;
+static const uint16_t hid_report_descriptor_len = amazon_remote_hid_desc_len;
 static uint8_t usb_hid_input_report[CFG_TUD_HID_EP_BUFSIZE];
 static size_t usb_hid_input_report_len = 0;
 
@@ -26,16 +28,16 @@ void device_event_handler(tinyusb_event_t *event, void *arg);
 
 static tusb_desc_device_t desc_device = {.bLength = sizeof(tusb_desc_device_t),
                                          .bDescriptorType = TUSB_DESC_DEVICE,
-                                         .bcdUSB = 0x0100, // NOTE: to be filled out later
+                                         .bcdUSB = 0x0200,
                                          .bDeviceClass = 0x00,
                                          .bDeviceSubClass = 0x00,
                                          .bDeviceProtocol = 0x00,
 
                                          .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
 
-                                         .idVendor = 0,  // NOTE: to be filled out later
-                                         .idProduct = 0, // NOTE: to be filled out later
-                                         .bcdDevice = 0, // NOTE: to be filled out later
+                                         .idVendor = 0x303A,  // Espressif
+                                         .idProduct = 0x8105, // ESP HID Bridge
+                                         .bcdDevice = 0x0100,
 
                                          // Index of manufacturer description string
                                          .iManufacturer = 0x01,
@@ -49,9 +51,9 @@ static tusb_desc_device_t desc_device = {.bLength = sizeof(tusb_desc_device_t),
 static const char *hid_string_descriptor[5] = {
     // array of pointer to string descriptors
     (char[]){0x09, 0x04}, // 0: is supported language is English (0x0409)
-    "Finger563",          // 1: Manufacturer, NOTE: to be filled out later
-    "USB BLE Dongle",     // 2: Product, NOTE: to be filled out later
-    "20011201",           // 3: Serials, NOTE: to be filled out later
+    "Amazon",             // 1: Manufacturer
+    "Fire TV Remote",     // 2: Product
+    "00000001",           // 3: Serials
     "USB HID Interface",  // 4: HID
 };
 
@@ -62,40 +64,11 @@ static uint8_t hid_configuration_descriptor[] = {
 
     // Interface number, string index, boot protocol, report descriptor len, EP In address, size &
     // polling interval
-    TUD_HID_INOUT_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, hid_report_descriptor.size(), 0x01, 0x81,
+    TUD_HID_INOUT_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, amazon_remote_hid_desc_len, 0x01, 0x81,
                              CFG_TUD_HID_EP_BUFSIZE, 1),
 };
 
-void start_usb_gamepad(const std::shared_ptr<GamepadDevice> &gamepad_device) {
-  // store the gamepad device
-  usb_gamepad = gamepad_device;
-
-  // update the usb descriptors
-  const auto &device_info = usb_gamepad->get_device_info();
-  hid_string_descriptor[1] = device_info.manufacturer_name.c_str();
-  hid_string_descriptor[2] = device_info.product_name.c_str();
-  hid_string_descriptor[3] = device_info.serial_number.c_str();
-  desc_device.idVendor = device_info.vid;
-  desc_device.idProduct = device_info.pid;
-  desc_device.bcdDevice = device_info.bcd;
-  desc_device.bcdUSB = device_info.usb_bcd;
-
-  // update the report descriptor
-  hid_report_descriptor = usb_gamepad->get_report_descriptor();
-
-  // update the configuration descriptor with the new report descriptor size
-  uint8_t updated_hid_configuration_descriptor[] = {
-      // Configuration number, interface count, string index, total length, attribute, power in mA
-      TUD_CONFIG_DESCRIPTOR(1, 1, 0, TUSB_DESC_TOTAL_LEN, 0x00, 100),
-
-      // Interface number, string index, boot protocol, report descriptor len, EP In address, size &
-      // polling interval
-      TUD_HID_INOUT_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, hid_report_descriptor.size(), 0x01,
-                               0x81, CFG_TUD_HID_EP_BUFSIZE, 1),
-  };
-  std::memcpy(hid_configuration_descriptor, updated_hid_configuration_descriptor,
-              sizeof(updated_hid_configuration_descriptor));
-
+void start_usb_hid() {
   tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(device_event_handler);
   tusb_cfg.task = TINYUSB_TASK_CUSTOM(4096 /*size */, 4 /* priority */,
                                       0 /* affinity: 0 - CPU0, 1 - CPU1 ... */);
@@ -115,7 +88,7 @@ void start_usb_gamepad(const std::shared_ptr<GamepadDevice> &gamepad_device) {
   logger.info("USB initialization DONE");
 }
 
-void stop_usb_gamepad() {
+void stop_usb_hid() {
   if (tinyusb_driver_uninstall() != ESP_OK) {
     logger.error("Failed to uninstall tinyusb driver");
     return;
@@ -144,16 +117,9 @@ void set_gui(std::shared_ptr<Gui> gui_ptr) { gui = gui_ptr; }
 void device_event_handler(tinyusb_event_t *event, void *arg) {
   switch (event->id) {
   case TINYUSB_EVENT_ATTACHED: {
-    // Invoked when device is mounted
     logger.info("USB Mounted");
-    auto maybe_transmission = usb_gamepad->on_attach();
-    if (maybe_transmission.has_value()) {
-      auto &[report_id, report] = maybe_transmission.value();
-      send_hid_report(report_id, report);
-    }
   } break;
   case TINYUSB_EVENT_DETACHED: {
-    // Invoked when device is unmounted
     logger.info("USB Unmounted");
   } break;
   default:
@@ -165,8 +131,7 @@ void device_event_handler(tinyusb_event_t *event, void *arg) {
 // Application return pointer to descriptor, whose contents must exist long enough for transfer to
 // complete
 extern "C" uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
-  // We use only one interface and one HID report descriptor, so we can ignore parameter 'instance'
-  return hid_report_descriptor.data();
+  return amazon_remote_hid_desc;
 }
 
 // Invoked when received GET_REPORT control request
@@ -196,30 +161,7 @@ extern "C" uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
 extern "C" void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                                       hid_report_type_t report_type, uint8_t const *buffer,
                                       uint16_t bufsize) {
-  if (report_type == HID_REPORT_TYPE_FEATURE) {
-    // TODO: pro controller supports feature reports
-  } else if (report_type == HID_REPORT_TYPE_OUTPUT) {
-    // pass the report along to the currently configured usb gamepad device
-    auto maybe_response = usb_gamepad->on_hid_report(report_id, buffer, bufsize);
-#if DEBUG_USB
-    std::string debug_string =
-        fmt::format("In: {:02x}, {:02x}, {:02x}", buffer[0], buffer[1], buffer[2]);
-#endif
-    if (maybe_response.has_value()) {
-      auto &[response_report_id, response_data] = maybe_response.value();
-      if (response_data.size()) {
-        // send_hid_report(response_report_id, response_data);
-        tud_hid_report(response_report_id, response_data.data(), response_data.size());
-      }
-#if DEBUG_USB
-      debug_string += fmt::format("\nOut: {:02x}, {:02x}, {:02x}", response_report_id,
-                                  response_data[0], response_data[1]);
-#endif
-    }
-#if DEBUG_USB
-    gui->set_label_text(debug_string);
-#endif
-  }
+  // Amazon remote pass-through: no processing needed on SET_REPORT
 }
 
 // Invoked when sent REPORT successfully to host

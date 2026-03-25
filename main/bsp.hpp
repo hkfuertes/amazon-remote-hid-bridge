@@ -8,6 +8,10 @@ using Bsp = espp::QtPy;
 #define HAS_DISPLAY 1
 #include "t-dongle-s3.hpp"
 using Bsp = espp::TDongleS3;
+#elif CONFIG_TARGET_HARDWARE_ESP32S3_ZERO
+#define HAS_DISPLAY 0
+#include "esp32s3_zero.hpp"
+using Bsp = espp::Esp32s3Zero;
 #else
 #error "No hardware target specified"
 #endif

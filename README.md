@@ -1,183 +1,112 @@
-# ESP USB BLE HID
+# Amazon Remote HID Bridge
 
-Example code for using BLE gamepad (such as Xbox wireless controller) with the
-Nintendo Switch via a USB dongle.
+ESP32-S3 firmware that acts as a BLE-to-USB HID bridge for Amazon Fire TV Remotes. It connects to the remote via Bluetooth Low Energy, receives HID reports, and forwards them over USB — making the remote work as a standard USB HID device on any computer (Windows, macOS, Linux).
 
-This repository contains example code for using an ESP32s3 to act as a USB-BLE
-HID bridge. You would run this code for instance on a QtPy ESP32s3 or a LilyGo
-T-Dongle S3, connected to a computer or other device which is a USB HID host.
-The main HID host that this targets is the Nintendo Switch. The QtPy / this code
-would then start a BLE GATT Client to connect to a BLE HID device (this example
-targets a gamepad), and will allow the wireless HID device (gamepad) to talk to
-the HID Host.
+## Supported Remotes
 
-![image](https://github.com/user-attachments/assets/d76558db-c34e-48d4-9771-06fa4ebdb05a)
+| Model | Status |
+|-------|--------|
+| R-NZ 201-180360 | Tested |
 
-<!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-refresh-toc -->
-**Table of Contents**
+To add a new remote model, see [Adding a New Remote](#adding-a-new-remote).
 
-- [ESP USB BLE HID](#esp-usb-ble-hid)
-  - [Plug and Play](#plug-and-play)
-    - [Purchase Dongle](#purchase-dongle)
-    - [Program It](#program-it)
-    - [Plug it into your Switch](#plug-it-into-your-switch)
-  - [Cloning](#cloning)
-  - [Configuration](#configuration)
-  - [Build and Flash](#build-and-flash)
-  - [How To Use](#how-to-use)
-    - [Pairing Mode](#pairing-mode)
-    - [Reconnection Mode](#reconnection-mode)
-    - [Connected](#connected)
-    - [Note about system power](#note-about-system-power)
-  - [Output](#output)
-  - [Helpful Links](#helpful-links)
+## Supported Hardware
 
-<!-- markdown-toc end -->
+| Board | Display |
+|-------|---------|
+| Waveshare ESP32-S3-Zero | No |
+| LilyGo T-Dongle S3 | Yes |
+| Adafruit QT Py ESP32-S3 | No |
 
-## Plug and Play
+## Quick Start
 
-If you just want to get a dongle and use your BLE controller with the switch,
-simply get the dongle, plug it into your computer, and run the programmer
-executable from the release.
+### Pre-built Binary
 
-### Purchase Dongle
+1. Download `amazon-remote-hid-bridge.bin` from the [releases page](https://github.com/hkfuertes/amazon-remote-hid-bridge/releases)
+2. Connect the ESP32-S3 via USB
+3. Put it in bootloader mode (hold BOOT, press RESET, release BOOT)
+4. Flash at offset `0x0` using [WebSerial](https://web.esphome.io) or `esptool.py`:
+   ```sh
+   esptool.py --chip esp32s3 write_flash 0x0 amazon-remote-hid-bridge.bin
+   ```
+5. Reset the board and pair your remote (see [Usage](#usage))
 
-Sources:
-- [LilyGo](https://lilygo.cc/products/t-dongle-s3?srsltid=AfmBOopsToYDfOeA4GJiUlQNNcefgA_lMLmWoF99lzdWc_j5Ysd9FUeW)
-- [Amazon](https://www.amazon.com/LILYGO-T-Dongle-S3-ESP32-S3-Development-Display/dp/B0BK9162QY)
+### Build with Docker
 
-### Program It
+No ESP-IDF installation needed:
 
-The dongle will require one-time programming to function as a BLE HID USB
-dongle.
-
-Download the release `programmer` executable from the latest [releases
-page](https://github.com/finger563/esp-usb-ble-hid/releases) for `windows`,
-`macos`, or `linux` - depending on which computer you want to use to perform the
-one-time programming.
-
-1. Download the programmer
-2. Unzip it
-3. Double click the `exe` (if windows), or open a terminal and execute it from
-   the command line `./esp-usb-ble-hid_programmer_v2.0.2_macos.bin`.
-
-### Plug it into your Switch
-
-Now that the dongle is programmed, simply plug it into your Switch and turn your
-switch on.
-  
-See the [How To Use](#how-to-use) section for information about how to pair /
-reconnect your controller to the dongle.
-
-https://github.com/user-attachments/assets/a0789d38-bd0e-4215-bf2c-ebedd9958495
-
-https://github.com/user-attachments/assets/c81b947a-24a1-4a44-b5d0-5d4c274beb93
-
-
-## Cloning
-
-Since this repo contains a submodule, you need to make sure you clone it
-recursively, e.g. with:
-
-``` sh
-git clone --recurse-submodules https://github.com/finger563/esp-usb-ble-hid
+```sh
+./build.sh
 ```
 
-Alternatively, you can always ensure the submodules are up to date after cloning
-(or if you forgot to clone recursively) by running:
+This produces `amazon-remote-hid-bridge.bin` ready to flash.
 
-``` sh
-git submodule update --init --recursive
+### Build with ESP-IDF
+
+Requires ESP-IDF v5.5.1+:
+
+```sh
+idf.py set-target esp32s3
+idf.py build
+idf.py -p PORT flash
 ```
 
 ## Configuration
 
-You can run `idf.py menuconfig` to configure the project to run on either the
-`T-Dongle-S3` or the `QtPy (ESP32 or ESP32S3)`. The configuration is under the
-`Hardware Configuration` menu from the main menu and is the `Target Hardware`
-option.
+Run `idf.py menuconfig` to configure:
 
-![CleanShot 2025-04-10 at 07 57 26](https://github.com/user-attachments/assets/be355584-251d-4c2c-81ed-15089b45f4e1)
+- **Hardware Configuration** > **Target Hardware** — select your board
+- **BLE Remote Configuration** > **Remote model** — select your remote model
+- **Debug Configuration** > **Debug mode** — enable serial console (disables USB HID) for capturing new remote descriptors
 
-## Build and Flash
+## Usage
 
-Build the project and flash it to the board, then run monitor tool to view serial output:
+### Pairing
 
-```
-idf.py -p PORT flash monitor
-```
+On first boot (no bonded devices), the bridge enters pairing mode automatically (LED breathes blue). Put your Amazon remote in pairing mode — they will connect and bond.
 
-(Replace PORT with the name of the serial port to use.)
+To pair a new remote later: **hold the BOOT button for 3 seconds** until the LED starts breathing faster.
 
-(To exit the serial monitor, type ``Ctrl-]``.)
+The bridge can store up to 5 bonded devices.
 
-See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
+### Reconnection
 
-## How To Use
-
-> NOTE: you must turn on the `support wired controllers` setting on your switch
-> for the dongle (or any wired controllers for that matter) to work.
-
-The dongle can store up to 5 paired devices at a time. When it turns on / is
-plugged in it will attempt to reconnect to one of those devices. If there are no
-paired devices, then it will enter pairing mode.
-
-If at any time you want to pair a new controller, simply press and hold the
-button on the dongle until the LED starts pulsing blue.
-
-### Pairing Mode
-
-While in pairing mode, the device will scan for any BLE devices which expose a
-HID service. It will connect and attempt to bond to the first device it finds.
-
-### Reconnection Mode
-
-When in this mode, the device will scan for the devices in its pairing list and
-connect to the first one it finds.
+After pairing, the bridge automatically reconnects to bonded remotes on boot. The LED breathes blue while scanning and turns off once connected.
 
 ### Connected
 
-While connected, the device will translate xbox controller inputs received via
-BLE into Nintendo Switch Pro controller inputs which will then be transmitted
-over USB.
+Once connected, button presses on the remote are forwarded over USB as standard HID reports. The LED toggles blue on each button press.
 
-If the controller disconnects, then the dongle will re-enter reconnection mode.
+### Button Map
 
-### Note about system power
+| Remote Button | HID Report |
+|---------------|------------|
+| Up / Down / Left / Right | Keyboard arrow keys |
+| Select (OK) | Keyboard Enter |
+| Volume Up / Down | Consumer Volume Up/Down |
+| Mute | Consumer Mute |
+| Play/Pause | Consumer Play/Pause |
+| Fast Forward / Rewind | Consumer FF/Rewind |
+| Home | Consumer Home (0x0223) |
+| Menu | Consumer Menu (0x0040) |
 
-The switch turns off its USB-C port when it enters sleep mode. This means that
-while the Switch Dock's USB-A port still has power, the dongle will not properly
-mount as a usb device until the Switch comes out of sleep. 
+## Adding a New Remote
 
-For this reason, you cannot use this dongle or the associated BLE controller to
-power on your switch unfortunately. The only way (currently) to remotely wake
-your switch is via Bluetooth Classic.
+1. Enable debug mode in `sdkconfig.defaults`:
+   ```
+   CONFIG_DEBUG_MODE=y
+   ```
+2. Build, flash, and connect to serial monitor (`115200` baud)
+3. Pair the new remote — the HID Report Map descriptor will be dumped to serial
+4. Copy the descriptor to a new file in `main/remotes/your_model.h`
+5. Add the model choice in `main/Kconfig.projbuild`
+6. Add the `#elif` in `main/amazon_remote_desc.h`
+7. Disable debug mode and rebuild
 
-That being said, I have read online that if you plug a usb-to-ethernet adapter
-into your Switch Dock, then the Switch may keep its USB-C port awake during
-sleep.
+## Credits
 
-## Output
+This project is based on [esp-usb-ble-hid](https://github.com/finger563/esp-usb-ble-hid) by [William Emfinger (@finger563)](https://github.com/finger563), originally designed as a BLE gamepad to USB bridge for the Nintendo Switch. This fork adapts it for Amazon Fire TV Remotes.
 
-https://github.com/user-attachments/assets/a0789d38-bd0e-4215-bf2c-ebedd9958495
+## License
 
-![CleanShot 2025-02-25 at 08 54 49](https://github.com/user-attachments/assets/d06a53cb-c20c-4de8-9987-38a7bc05b60a)
-
-![CleanShot 2025-02-25 at 09 02 40](https://github.com/user-attachments/assets/6c3820d1-b9f0-4188-96a6-0d1d8b44e1fb)
-
-![CleanShot 2025-02-25 at 09 03 03](https://github.com/user-attachments/assets/89f524e4-1737-4aec-92ac-e3a64f69c6fe)
-
-## Helpful Links
-
-The links below were invaluable in developing the switch pro implemenation
-within this repo such that it would work on MacOS, Android, iOS, and (most
-importantly) the Nintendo Switch.
-
-* https://github.com/Brikwerk/nxbt/blob/master/nxbt/controller/protocol.py
-* https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/bluetooth_hid_subcommands_notes.md
-* https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/USB-HID-Notes.md
-* https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/spi_flash_notes.md
-* https://github.com/EasyConNS/BlueCon-esp32/tree/master/components/joycon
-* https://github.com/mzyy94/nscon/blob/master/nscon.go
-* https://www.mzyy94.com/blog/2020/03/20/nintendo-switch-pro-controller-usb-gadget/
-
+See the original project for license details.

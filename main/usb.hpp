@@ -5,8 +5,6 @@
 
 #include "logger.hpp"
 
-#include "gamepad_device.hpp"
-
 #include "bsp.hpp"
 
 extern "C" {
@@ -17,9 +15,9 @@ extern "C" {
 
 #include "tinyusb_default_config.h"
 
-void start_usb_gamepad(const std::shared_ptr<GamepadDevice> &gamepad_device);
+void start_usb_hid();
 bool send_hid_report(uint8_t report_id, const std::vector<uint8_t> &report);
-void stop_usb_gamepad();
+void stop_usb_hid();
 
 // debugging
 

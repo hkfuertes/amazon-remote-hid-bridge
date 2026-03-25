@@ -1,0 +1,5 @@
+dependencies:
+  idf: '>=5.4'
+  espp/base_component: '>=1.0'
+  espp/neopixel: '>=1.0'
+  espp/interrupt: '>=1.0'
