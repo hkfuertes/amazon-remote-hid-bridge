@@ -90,18 +90,46 @@ Once connected, button presses on the remote are forwarded over USB as standard 
 | Home | Consumer Home (0x0223) |
 | Menu | Consumer Menu (0x0040) |
 
+## Debug Mode (Serial Console)
+
+The ESP32-S3-Zero only has one USB port. In normal mode it is used for USB HID, so there is no serial output. **Debug mode** disables USB HID and uses that port as a serial console instead, allowing you to see BLE scan results, connection events, HID descriptors, and button presses.
+
+To enable debug mode, set in `sdkconfig.defaults`:
+
+```
+CONFIG_DEBUG_MODE=y
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+```
+
+Then build and flash. Connect to the serial console at **115200 baud**:
+
+```sh
+# macOS
+screen /dev/tty.usbmodem101 115200
+
+# Linux
+screen /dev/ttyACM0 115200
+
+# Windows (find COM port in Device Manager)
+# Use PuTTY or similar at 115200 baud
+```
+
+To return to normal (USB HID) mode, remove or comment out those two lines and rebuild.
+
 ## Adding a New Remote
 
-1. Enable debug mode in `sdkconfig.defaults`:
-   ```
-   CONFIG_DEBUG_MODE=y
-   ```
-2. Build, flash, and connect to serial monitor (`115200` baud)
-3. Pair the new remote — the HID Report Map descriptor will be dumped to serial
-4. Copy the descriptor to a new file in `main/remotes/your_model.h`
-5. Add the model choice in `main/Kconfig.projbuild`
-6. Add the `#elif` in `main/amazon_remote_desc.h`
-7. Disable debug mode and rebuild
+1. Enable debug mode (see above)
+2. Build and flash
+3. Put the new remote in pairing mode — hold the **BOOT** button on the ESP32 for 3 seconds to enter pairing
+4. The serial console will show:
+   - `[BLE] Connected` — connection established
+   - `[BLE] HID Service has N characteristics` — with Report Reference IDs
+   - `========== HID REPORT MAP DUMP ==========` — the full HID descriptor
+   - `[BUTTON] X pressed` — button presses with identified names, or raw hex for unknown buttons
+5. Copy the descriptor dump to a new file in `main/remotes/your_model.h`
+6. Add the model as a new `config` entry in `main/Kconfig.projbuild` under `choice REMOTE_MODEL`
+7. Add the corresponding `#elif` in `main/amazon_remote_desc.h`
+8. Disable debug mode and rebuild
 
 ## Credits
 
