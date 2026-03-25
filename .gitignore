@@ -35,3 +35,7 @@ sdkconfig
 sdkconfig.old
 managed_components/
 squareline/backup/
+dependencies.lock
+
+# Firmware binaries
+*.bin
