@@ -1,13 +1,7 @@
 #include "usb.hpp"
-#include "bsp.hpp"
 #include "amazon_remote_desc.h"
 
 static espp::Logger logger({.tag = "USB"});
-
-// DEUBGGING:
-#if DEBUG_USB
-static std::shared_ptr<Gui> gui;
-#endif
 
 /************* TinyUSB descriptors ****************/
 
@@ -106,10 +100,6 @@ bool send_hid_report(uint8_t report_id, const std::vector<uint8_t> &report) {
   // now try to send it
   return tud_hid_report(report_id, usb_hid_input_report, usb_hid_input_report_len);
 }
-
-#if DEBUG_USB
-void set_gui(std::shared_ptr<Gui> gui_ptr) { gui = gui_ptr; }
-#endif
 
 /********* TinyUSB HID callbacks ***************/
 

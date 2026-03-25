@@ -5,8 +5,6 @@
 
 #include "logger.hpp"
 
-#include "bsp.hpp"
-
 extern "C" {
 #include <class/hid/hid_device.h>
 #include <tinyusb.h>
@@ -18,17 +16,3 @@ extern "C" {
 void start_usb_hid();
 bool send_hid_report(uint8_t report_id, const std::vector<uint8_t> &report);
 void stop_usb_hid();
-
-// debugging
-
-#if HAS_DISPLAY
-
-// Set this to 1 to turn on debugging for USB using the GUI
-#define DEBUG_USB 0
-
-#if DEBUG_USB
-#include "gui.hpp"
-void set_gui(std::shared_ptr<Gui> gui_ptr);
-#endif // DEBUG_USB
-
-#endif // HAS_DISPLAY
