@@ -1,4 +1,4 @@
-name: Build and Package Main
+name: Build and Release
 
 on:
   push:
@@ -8,26 +8,18 @@ on:
   workflow_dispatch:
 
 env:
-  APP_NAME: 'ESP USB BLE HID'
   IDF_TARGET: 'esp32s3'
   IDF_VERSION: 'v5.5.1'
-  IDF_COMPONENT_MANAGER: "1" # whether to enable the component manager or not
-  FLASH_TOTAL_OVERRIDE: '2097152' # 2MB flash app partition for main app
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-    continue-on-error: false
-
-    outputs:
-      zipfile-id: ${{ steps.zip_step.outputs.artifact-id }}
 
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
 
-    - name: Build Main Code
+    - name: Build
       uses: espressif/esp-idf-ci-action@v1
       with:
         esp_idf_version: ${{ env.IDF_VERSION }}
@@ -35,53 +27,28 @@ jobs:
         path: '.'
         command: 'idf.py build'
 
-    - name: Upload Build Outputs
-      uses: actions/upload-artifact@v4
-      id: zip_step
+    - name: Generate merged binary
+      uses: espressif/esp-idf-ci-action@v1
       with:
-        name: build-artifacts
-        path: |
-          build/*.bin
-          build/*.elf
-          build/bootloader/bootloader.bin
-          build/partition_table/partition-table.bin
-          build/flasher_args.json
-          build/flash_args
+        esp_idf_version: ${{ env.IDF_VERSION }}
+        target: ${{ env.IDF_TARGET }}
+        path: '.'
+        command: >
+          esptool.py --chip esp32s3 merge_bin
+          -o build/amazon-remote-hid-bridge.bin
+          --flash_mode dio --flash_freq 80m --flash_size 4MB
+          0x0 build/bootloader/bootloader.bin
+          0x8000 build/partition_table/partition-table.bin
+          0x10000 build/esp-usb-ble-hid.bin
 
-    - name: Attach files to release
+    - name: Upload merged binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: amazon-remote-hid-bridge
+        path: build/amazon-remote-hid-bridge.bin
+
+    - name: Attach binary to release
       uses: softprops/action-gh-release@v2
       if: ${{ github.event.release && github.event.action == 'published' }}
       with:
-        files: |
-          build/*.bin
-          build/*.elf
-          build/bootloader/bootloader.bin
-          build/partition_table/partition-table.bin
-          build/flasher_args.json
-          build/flash_args
-
-    - name: Determine Size Delta
-      # only run this if the release is published
-      if: ${{ github.event.release && github.event.action == 'published' }}
-      uses: esp-cpp/esp-idf-size-delta@v1
-      with:
-        app_name: ${{ env.APP_NAME }}
-        app_path: "."
-        idf_target: ${{ env.IDF_TARGET }}
-        idf_version: ${{ env.IDF_VERSION }}
-        idf_component_manager: ${{ env.IDF_COMPONENT_MANAGER }}
-        flash_total_override: ${{ env.FLASH_TOTAL_OVERRIDE }}
-        post_comment: 'false'
-
-  package:
-    name: Package the binaries into an executables for Windows, MacOS, and Linux (Ubuntu)
-    needs: build
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: esp-cpp/esp-packaged-programmer-action@v1.0.5
-        with:
-          zipfile-id: ${{ needs.build.outputs.zipfile-id }}
-          programmer-name: 'esp-usb-ble-hid_programmer'
+        files: build/amazon-remote-hid-bridge.bin
