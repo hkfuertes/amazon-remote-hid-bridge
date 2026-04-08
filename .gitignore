@@ -39,3 +39,4 @@ dependencies.lock
 
 # Firmware binaries
 *.bin
+pr_description.md
