@@ -352,8 +352,8 @@ static bool timer_callback() {
         if (pReportMap && pReportMap->canRead()) {
           auto mapData = pReportMap->readValue();
           printf("\n\n========== HID REPORT MAP DUMP ==========\n");
-          printf("// %d bytes - paste into amazon_remote_desc.h\n", (int)mapData.size());
-          printf("static const uint8_t amazon_remote_hid_desc[] = {\n");
+          printf("// %d bytes - paste into remotes/your_model.h\n", (int)mapData.size());
+          printf("static const uint8_t remote_hid_desc[] = {\n");
           for (size_t i = 0; i < mapData.size(); i++) {
             if (i % 16 == 0) printf("    ");
             printf("0x%02X,", (uint8_t)mapData[i]);
@@ -361,7 +361,7 @@ static bool timer_callback() {
             else printf(" ");
           }
           printf("};\n");
-          printf("static const uint16_t amazon_remote_hid_desc_len = sizeof(amazon_remote_hid_desc);\n");
+          printf("static const uint16_t remote_hid_desc_len = sizeof(remote_hid_desc);\n");
           printf("========== END DUMP ==========\n\n");
         } else {
           printf("WARNING: Could not read HID Report Map characteristic\n");

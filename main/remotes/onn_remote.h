@@ -9,7 +9,7 @@
 //
 // See BUTTON_MAP.md for the full mapping table.
 
-static const uint8_t amazon_remote_hid_desc[] = {
+static const uint8_t remote_hid_desc[] = {
     // ========================
     // Consumer Control (Report ID 1)
     // ========================
@@ -75,4 +75,4 @@ static const uint8_t amazon_remote_hid_desc[] = {
 
     0xC0,             // End Collection
 };
-static const uint16_t amazon_remote_hid_desc_len = sizeof(amazon_remote_hid_desc);
+static const uint16_t remote_hid_desc_len = sizeof(remote_hid_desc);

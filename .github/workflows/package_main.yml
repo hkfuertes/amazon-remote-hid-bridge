@@ -35,7 +35,7 @@ jobs:
         path: '.'
         command: >
           esptool.py --chip esp32s3 merge_bin
-          -o build/amazon-remote-hid-bridge.bin
+          -o build/atv-hid-bridge.bin
           --flash_mode dio --flash_freq 80m --flash_size 4MB
           0x0 build/bootloader/bootloader.bin
           0x8000 build/partition_table/partition-table.bin
@@ -44,11 +44,11 @@ jobs:
     - name: Upload merged binary
       uses: actions/upload-artifact@v4
       with:
-        name: amazon-remote-hid-bridge
-        path: build/amazon-remote-hid-bridge.bin
+        name: atv-hid-bridge
+        path: build/atv-hid-bridge.bin
 
     - name: Attach binary to release
       uses: softprops/action-gh-release@v2
       if: ${{ github.event.release && github.event.action == 'published' }}
       with:
-        files: build/amazon-remote-hid-bridge.bin
+        files: build/atv-hid-bridge.bin
