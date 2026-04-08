@@ -60,4 +60,7 @@ CONFIG_ESP_COREDUMP_ENABLE=y
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 
 # BLE Remote - target MAC (leave empty to connect to any HID device)
-CONFIG_BLE_TARGET_MAC=""
+CONFIG_BLE_TARGET_MAC="CA:47:39:34:AC:97"
+
+# Remote model: ONN Remote
+CONFIG_REMOTE_ONN=y

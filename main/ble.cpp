@@ -2,6 +2,7 @@
 #include "bsp.hpp"
 
 #include <map>
+#include <atomic>
 #include "gaussian.hpp"
 
 // Map from characteristic handle to report ID (from Report Reference descriptor)
@@ -30,6 +31,12 @@ static NimBLEUUID battery_level_uuid(espp::BatteryService::BATTERY_LEVEL_CHAR_UU
 
 static bool is_pairing = true;
 static notify_callback_t notify_callback = nullptr;
+static std::atomic<bool> connect_in_progress{false};
+
+// Timestamp of last connection event – used to add a grace period before
+// service discovery so that encryption has time to complete.
+static auto last_connect_time = std::chrono::steady_clock::now();
+static constexpr auto post_connect_grace = std::chrono::milliseconds(1500);
 
 // LED configuration for BLE pairing / reconnecting
 static constexpr float pairing_breathing_period = 1.0f;
@@ -69,6 +76,7 @@ class ClientCallbacks : public NimBLEClientCallbacks {
   void onConnect(NimBLEClient *pClient) override {
     printf("[BLE] Connected to: %s\n", pClient->getPeerAddress().toString().c_str());
     logger.info("connected to: {}", pClient->getPeerAddress().toString());
+    last_connect_time = std::chrono::steady_clock::now();
     static constexpr bool async = true;
     // set the connection parameters now that we've connected
     pClient->setConnectionParams(min_conn_interval, max_conn_interval, latency,
@@ -83,15 +91,32 @@ class ClientCallbacks : public NimBLEClientCallbacks {
   }
 
   void onDisconnect(NimBLEClient *pClient, int reason) override {
+    connect_in_progress = false;
     printf("[BLE] Disconnected from %s, reason=%d\n",
            pClient->getPeerAddress().toString().c_str(), reason);
     logger.info("{} Disconnected, reason = {} - Starting scan",
                 pClient->getPeerAddress().toString(), reason);
-    // if we are not scanning, then start scanning
+    subscribed = false;
+
+    // 0x206 = PIN or Key Missing: the stored bond keys are rejected by the
+    // remote. Delete the stale bond and switch to pairing mode so that the
+    // next connection performs a fresh pairing/bonding exchange.
+    static constexpr int BLE_ERR_PIN_OR_KEY_MISSING = 0x206;
+    if (reason == BLE_ERR_PIN_OR_KEY_MISSING) {
+      NimBLEAddress peer = pClient->getPeerAddress();
+      printf("[BLE] Key mismatch (reason=0x%03X) – deleting bond for %s and re-pairing\n",
+             reason, peer.toString().c_str());
+      NimBLEDevice::deleteBond(peer);
+      if (!NimBLEDevice::getScan()->isScanning()) {
+        start_ble_pairing_thread(notify_callback);
+      }
+      return;
+    }
+
+    // For any other disconnect reason, attempt reconnection
     if (!NimBLEDevice::getScan()->isScanning()) {
       start_ble_reconnection_thread(notify_callback);
     }
-    subscribed = false;
   }
 
   void onAuthenticationComplete(NimBLEConnInfo &connInfo) override {
@@ -111,15 +136,44 @@ static ClientCallbacks clientCallbacks;
 class ScanCallbacks : public NimBLEScanCallbacks {
   espp::Logger logger =
       espp::Logger({.tag = "BLE Scan Callbacks", .level = espp::Logger::Verbosity::INFO});
+
+  bool connect_to_peer_address(const NimBLEAddress &peer_addr) {
+    auto pClient = NimBLEDevice::getDisconnectedClient();
+    if (!pClient) {
+      pClient = NimBLEDevice::createClient(peer_addr);
+      if (!pClient) {
+        logger.error("Failed to create client");
+        return false;
+      }
+    }
+
+    pClient->setClientCallbacks(&clientCallbacks, false);
+    static constexpr bool delete_on_disconnect = true;
+    static constexpr bool delete_on_connect_fail = true;
+    pClient->setSelfDelete(delete_on_disconnect, delete_on_connect_fail);
+    if (!pClient->connect(peer_addr, true, true, false)) {
+      logger.error("Failed to connect to {}", peer_addr.toString());
+      connect_in_progress = false;
+      return false;
+    }
+    return true;
+  }
+
   void onResult(const NimBLEAdvertisedDevice *advertisedDevice) override {
+    if (NimBLEDevice::getConnectedClients().size() > 0) {
+      return;
+    }
+
     printf("[SCAN] Device: %s Name='%s' RSSI=%d\n",
            advertisedDevice->getAddress().toString().c_str(),
            advertisedDevice->getName().c_str(),
            advertisedDevice->getRSSI());
 
-    // If a target MAC is configured, only connect to that specific device
+    // If a target MAC is configured, only enforce it during pairing. During
+    // reconnection, privacy-enabled devices may advertise with a different
+    // address form (including all-zero placeholders).
     static const std::string target_mac(CONFIG_BLE_TARGET_MAC);
-    if (!target_mac.empty()) {
+    if (is_pairing && !target_mac.empty()) {
       if (advertisedDevice->getAddress().toString() != target_mac) {
         return;
       }
@@ -130,6 +184,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     bool is_pairable_device =
         advertisedDevice->isAdvertisingService(hid_service_uuid) ||
         advertisedDevice->getAppearance() == 0x0180; // Generic HID Device (Amazon Remote)
+    bool is_private_addr = advertisedDevice->getAddress().toString() == "00:00:00:00:00:00";
     if (is_pairing && is_pairable_device) {
       // if we're pairing, then simply connect to the first device that advertises
       // the HID service. The connection callback will try to bond to it.
@@ -138,32 +193,43 @@ class ScanCallbacks : public NimBLEScanCallbacks {
       // if we're not pairing, then we're reconnecting, so we need to check if
       // the device is bonded
       should_connect = true;
+    } else if (!is_pairing && is_private_addr && NimBLEDevice::getNumBonds() > 0) {
+      // Fallback for privacy-enabled remotes that may temporarily advertise with
+      // an all-zero address representation.
+      should_connect = true;
     }
     if (should_connect) {
+      if (connect_in_progress.exchange(true)) {
+        return;
+      }
       /** stop scan before connecting, since we use async connections and don't
           want to possibly try to connect to multiple devices. */
       NimBLEDevice::getScan()->stop();
 
       logger.info("Found Our Device");
 
-      /** Async connections can be made directly in the scan callbacks */
-      auto pClient = NimBLEDevice::getDisconnectedClient();
-      if (!pClient) {
-        pClient = NimBLEDevice::createClient(advertisedDevice->getAddress());
-        if (!pClient) {
-          logger.error("Failed to create client");
-          return;
+      if (!is_pairing && is_private_addr && NimBLEDevice::getNumBonds() > 0) {
+        bool attempted = false;
+        int num_bonds = NimBLEDevice::getNumBonds();
+        for (int i = 0; i < num_bonds; i++) {
+          NimBLEAddress bonded = NimBLEDevice::getBondedAddress(i);
+          attempted = true;
+          printf("[BLE] Reconnect via bond[%d]: %s type=%d\n", i,
+                 bonded.toString().c_str(), bonded.getType());
+          if (connect_to_peer_address(bonded)) {
+            return;
+          }
         }
+        if (attempted) {
+          logger.error("Failed reconnect attempts for all bonded peers");
+        }
+        connect_in_progress = false;
+        return;
       }
 
-      // and set our callbacks
-      pClient->setClientCallbacks(&clientCallbacks, false);
-      static constexpr bool delete_on_disconnect = true;
-      static constexpr bool delete_on_connect_fail = true;
-      pClient->setSelfDelete(delete_on_disconnect, delete_on_connect_fail);
-      if (!pClient->connect(true, true,
-                            false)) { // delete attributes, async connect, no MTU exchange
+      if (!connect_to_peer_address(advertisedDevice->getAddress())) {
         logger.error("Failed to connect");
+        connect_in_progress = false;
         return;
       }
     }
@@ -171,6 +237,9 @@ class ScanCallbacks : public NimBLEScanCallbacks {
 
   void onScanEnd(const NimBLEScanResults &results, int reason) override {
     printf("Scan Ended\n");
+    if (connect_in_progress || NimBLEDevice::getConnectedClients().size() > 0) {
+      return;
+    }
     start_ble_reconnection_thread(notify_callback);
   }
 };
@@ -212,6 +281,17 @@ static bool timer_callback() {
       start_ble_reconnection_thread(notify_callback);
     }
     return false; // don't stop the timer
+  }
+
+  // Grace period: wait for encryption handshake to complete before attempting
+  // service discovery. Without this, GATT operations may fail or trigger a
+  // disconnect on devices that require encryption first.
+  auto since_connect = std::chrono::steady_clock::now() - last_connect_time;
+  if (since_connect < post_connect_grace) {
+    printf("[BLE] Waiting for post-connect grace period (%lldms remaining)\n",
+           (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+               post_connect_grace - since_connect).count());
+    return false; // don't stop the timer, try again next tick
   }
 
   // try to subscribe to notifications for each connected client
@@ -300,9 +380,7 @@ static bool timer_callback() {
       }
     }
     if (!subscribed) {
-      // if we could not subscribe, then delete the bond info for the client so
-      // that we don't try to reconnect to them in the future.
-      NimBLEDevice::deleteBond(pClient->getConnInfo().getIdAddress());
+      printf("[BLE] Not subscribed yet; keeping bond and retrying\n");
     }
   }
 
@@ -325,15 +403,20 @@ void init_ble(const std::string &device_name) {
   bool mitm = false;
   bool secure_connections = false; // false to support older BLE 4.0 remotes
   NimBLEDevice::setSecurityAuth(bonding, mitm, secure_connections);
+  NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RPA_PUBLIC_DEFAULT);
 }
 
 static void start_scan() {
-  // if scanning, then stop
-  if (NimBLEDevice::getScan()->isScanning()) {
-    NimBLEDevice::getScan()->stop();
-  }
-
   NimBLEScan *pScan = NimBLEDevice::getScan();
+
+  // Avoid scan thrashing from repeated reconnect callbacks.
+  if (pScan->isScanning()) {
+    if (!led_task->is_running()) {
+      breathing_start = std::chrono::high_resolution_clock::now();
+      led_task->start();
+    }
+    return;
+  }
 
   // Set the callbacks to call when scan events occur, no duplicates
   pScan->setScanCallbacks(&scanCallbacks);
@@ -355,7 +438,9 @@ static void start_scan() {
   }
 
   // now start the led task
-  led_task->start();
+  if (!led_task->is_running()) {
+    led_task->start();
+  }
 
   if (!scanTimer) {
     // now start a thread to register for notifications if connected or restart
@@ -363,7 +448,7 @@ static void start_scan() {
     using namespace std::chrono_literals;
     scanTimer = std::make_unique<espp::Timer>(
         espp::Timer::Config{.name = "Scan Timer",
-                            .period = 100ms,
+                            .period = 500ms,
                             .callback = timer_callback,
                             .log_level = espp::Logger::Verbosity::INFO});
   }
