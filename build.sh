@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-IMAGE_NAME="amazon-remote-hid-bridge"
-CONTAINER_NAME="amazon-remote-hid-bridge-build"
-OUTPUT_BIN="amazon-remote-hid-bridge.bin"
+IMAGE_NAME="atv-hid-bridge"
+CONTAINER_NAME="atv-hid-bridge-build"
+OUTPUT_BIN="atv-hid-bridge.bin"
 
 echo "=== Building firmware with Docker ==="
 docker build -t "$IMAGE_NAME" .

@@ -1,5 +1,5 @@
 #include "usb.hpp"
-#include "amazon_remote_desc.h"
+#include "remote_desc.h"
 
 static espp::Logger logger({.tag = "USB"});
 
@@ -12,9 +12,9 @@ static espp::Logger logger({.tag = "USB"});
 #define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + CFG_TUD_HID * TUD_HID_INOUT_DESC_LEN)
 static_assert(CFG_TUD_HID >= 1, "CFG_TUD_HID must be at least 1");
 
-// Use the Amazon Remote HID descriptor directly
-static const uint8_t* hid_report_descriptor     = amazon_remote_hid_desc;
-static const uint16_t hid_report_descriptor_len = amazon_remote_hid_desc_len;
+// Use the remote HID descriptor selected by Kconfig
+static const uint8_t* hid_report_descriptor     = remote_hid_desc;
+static const uint16_t hid_report_descriptor_len = remote_hid_desc_len;
 static uint8_t usb_hid_input_report[CFG_TUD_HID_EP_BUFSIZE];
 static size_t usb_hid_input_report_len = 0;
 
@@ -45,8 +45,8 @@ static tusb_desc_device_t desc_device = {.bLength = sizeof(tusb_desc_device_t),
 static const char *hid_string_descriptor[5] = {
     // array of pointer to string descriptors
     (char[]){0x09, 0x04}, // 0: is supported language is English (0x0409)
-    "Amazon",             // 1: Manufacturer
-    "Fire TV Remote",     // 2: Product
+    "atv-hid-bridge",     // 1: Manufacturer
+    "BLE HID Bridge",     // 2: Product
     "00000001",           // 3: Serials
     "USB HID Interface",  // 4: HID
 };
@@ -58,7 +58,7 @@ static uint8_t hid_configuration_descriptor[] = {
 
     // Interface number, string index, boot protocol, report descriptor len, EP In address, size &
     // polling interval
-    TUD_HID_INOUT_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, amazon_remote_hid_desc_len, 0x01, 0x81,
+    TUD_HID_INOUT_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, remote_hid_desc_len, 0x01, 0x81,
                              CFG_TUD_HID_EP_BUFSIZE, 1),
 };
 
@@ -87,18 +87,7 @@ void stop_usb_hid() {
     logger.error("Failed to uninstall tinyusb driver");
     return;
   }
-  logger.info("USB initialization DONE");
-}
-
-bool send_hid_report(uint8_t report_id, const std::vector<uint8_t> &report) {
-  if (report.size() == 0 || report.size() > CFG_TUD_HID_EP_BUFSIZE) {
-    return false;
-  }
-  // copy the report data into the usb_hid_input_report buffer
-  std::memcpy(usb_hid_input_report, report.data(), report.size());
-  usb_hid_input_report_len = report.size();
-  // now try to send it
-  return tud_hid_report(report_id, usb_hid_input_report, usb_hid_input_report_len);
+  logger.info("USB uninstalled");
 }
 
 /********* TinyUSB HID callbacks ***************/
@@ -121,7 +110,7 @@ void device_event_handler(tinyusb_event_t *event, void *arg) {
 // Application return pointer to descriptor, whose contents must exist long enough for transfer to
 // complete
 extern "C" uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
-  return amazon_remote_hid_desc;
+  return remote_hid_desc;
 }
 
 // Invoked when received GET_REPORT control request
@@ -151,7 +140,7 @@ extern "C" uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
 extern "C" void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                                       hid_report_type_t report_type, uint8_t const *buffer,
                                       uint16_t bufsize) {
-  // Amazon remote pass-through: no processing needed on SET_REPORT
+  // BLE remote pass-through: no processing needed on SET_REPORT
 }
 
 // Invoked when sent REPORT successfully to host

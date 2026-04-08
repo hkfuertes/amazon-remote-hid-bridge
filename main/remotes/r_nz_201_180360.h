@@ -4,7 +4,7 @@
 // Amazon Fire TV Remote - Model: R-NZ 201-180360
 // Simplified descriptor: only keyboard (report 1) + consumer (report 2)
 // Strips vendor-specific reports (0xF0-0xF3) that can confuse some OS drivers
-static const uint8_t amazon_remote_hid_desc[] = {
+static const uint8_t remote_hid_desc[] = {
     // Keyboard (Report ID 1): 3 keycodes
     0x05, 0x01,       // Usage Page (Generic Desktop)
     0x09, 0x06,       // Usage (Keyboard)
@@ -34,4 +34,4 @@ static const uint8_t amazon_remote_hid_desc[] = {
     0x81, 0x00,       //   Input (Data, Array, Absolute)
     0xC0,             // End Collection
 };
-static const uint16_t amazon_remote_hid_desc_len = sizeof(amazon_remote_hid_desc);
+static const uint16_t remote_hid_desc_len = sizeof(remote_hid_desc);

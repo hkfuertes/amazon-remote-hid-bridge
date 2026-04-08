@@ -17,7 +17,7 @@ RUN bash -c "source /opt/esp/idf/export.sh && \
 RUN bash -c "source /opt/esp/idf/export.sh && \
     cd build && \
     esptool.py --chip esp32s3 merge_bin \
-      -o amazon-remote-hid-bridge.bin \
+      -o atv-hid-bridge.bin \
       --flash_mode dio \
       --flash_freq 80m \
       --flash_size 4MB \
@@ -27,7 +27,7 @@ RUN bash -c "source /opt/esp/idf/export.sh && \
       0x10000 esp-usb-ble-hid.bin \
       2>/dev/null || \
     esptool.py --chip esp32s3 merge_bin \
-      -o amazon-remote-hid-bridge.bin \
+      -o atv-hid-bridge.bin \
       --flash_mode dio \
       --flash_freq 80m \
       --flash_size 4MB \
@@ -35,5 +35,5 @@ RUN bash -c "source /opt/esp/idf/export.sh && \
       0x8000 partition_table/partition-table.bin \
       0x10000 esp-usb-ble-hid.bin"
 
-# The merged binary will be at /project/build/amazon-remote-hid-bridge.bin
-CMD ["echo", "Build complete. Extract with: docker cp <container>:/project/build/amazon-remote-hid-bridge.bin ."]
+# The merged binary will be at /project/build/atv-hid-bridge.bin
+CMD ["echo", "Build complete. Extract with: docker cp <container>:/project/build/atv-hid-bridge.bin ."]
