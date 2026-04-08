@@ -15,6 +15,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        remote: [amazon, onn]
+
+    name: Build (${{ matrix.remote }})
+
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
@@ -25,7 +31,10 @@ jobs:
         esp_idf_version: ${{ env.IDF_VERSION }}
         target: ${{ env.IDF_TARGET }}
         path: '.'
-        command: 'idf.py build'
+        command: >
+          idf.py
+          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.${{ matrix.remote }}"
+          build
 
     - name: Generate merged binary
       uses: espressif/esp-idf-ci-action@v1
@@ -35,7 +44,7 @@ jobs:
         path: '.'
         command: >
           esptool.py --chip esp32s3 merge_bin
-          -o build/atv-hid-bridge.bin
+          -o build/atv-hid-bridge-${{ matrix.remote }}.bin
           --flash_mode dio --flash_freq 80m --flash_size 4MB
           0x0 build/bootloader/bootloader.bin
           0x8000 build/partition_table/partition-table.bin
@@ -44,11 +53,11 @@ jobs:
     - name: Upload merged binary
       uses: actions/upload-artifact@v4
       with:
-        name: atv-hid-bridge
-        path: build/atv-hid-bridge.bin
+        name: atv-hid-bridge-${{ matrix.remote }}
+        path: build/atv-hid-bridge-${{ matrix.remote }}.bin
 
     - name: Attach binary to release
       uses: softprops/action-gh-release@v2
       if: ${{ github.event.release && github.event.action == 'published' }}
       with:
-        files: build/atv-hid-bridge.bin
+        files: build/atv-hid-bridge-${{ matrix.remote }}.bin

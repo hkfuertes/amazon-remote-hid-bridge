@@ -10,6 +10,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        remote: [amazon, onn]
+
+    name: Build (${{ matrix.remote }})
+
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
@@ -20,3 +26,7 @@ jobs:
         esp_idf_version: ${{ env.IDF_VERSION }}
         target: ${{ env.IDF_TARGET }}
         path: '.'
+        command: >
+          idf.py
+          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.${{ matrix.remote }}"
+          build

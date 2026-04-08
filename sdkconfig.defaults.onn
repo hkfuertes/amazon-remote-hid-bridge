@@ -1,0 +1,5 @@
+# Remote model: ONN Remote
+CONFIG_REMOTE_ONN=y
+
+# BLE Remote - target MAC (leave empty to connect to any HID device)
+CONFIG_BLE_TARGET_MAC=""
