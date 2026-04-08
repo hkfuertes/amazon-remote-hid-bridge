@@ -43,5 +43,8 @@ menu "BLE Remote Configuration"
         config REMOTE_R_NZ_201_180360
             bool "R-NZ 201-180360"
 
+        config REMOTE_ONN
+            bool "ONN Remote"
+
     endchoice
 endmenu
